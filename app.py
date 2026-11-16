@@ -11,7 +11,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Estilo CSS discreto para aparência corporativa
 st.markdown(
     """
     <style>
@@ -29,8 +28,12 @@ st.markdown(
 )
 
 
+def formatar_brl(valor: float) -> str:
+    return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
 @st.cache_data
-def gerar_base_corporativa(n_registros: int = 400, seed: int = 42) -> pd.DataFrame:
+def gerar_base_corporativa(n_registros: int = 500, seed: int = 42) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
     nomes_base = [
         "Ana Silva", "Bruno Costa", "Carlos Mendes", "Daniela Rocha", "Eduardo Lima",
@@ -68,7 +71,6 @@ def gerar_base_corporativa(n_registros: int = 400, seed: int = 42) -> pd.DataFra
     dias_inativo = rng.integers(1, 150, size=n_registros)
     chamados_suporte = rng.poisson(lam=2.1, size=n_registros)
 
-    # Função logística para probabilidade realista de churn
     logit = (
         -2.4
         + 0.028 * dias_inativo
@@ -96,7 +98,7 @@ def gerar_base_corporativa(n_registros: int = 400, seed: int = 42) -> pd.DataFra
     )
 
 
-# Sidebar: Controles de Engenharia e Fonte de Dados
+# Sidebar
 with st.sidebar:
     st.header("Configuração do Pipeline")
     fonte_dados = st.radio(
@@ -113,7 +115,7 @@ with st.sidebar:
             st.info("Aguardando upload. Usando base padrão temporariamente.")
             df = gerar_base_corporativa()
     else:
-        tamanho = st.slider("Volume de registros simulados", 200, 2000, 500, step=100)
+        tamanho = st.slider("Volume de registros simulados", 300, 2500, 600, step=100)
         seed = st.number_input("Semente aleatória (Seed)", value=42, step=1)
         df = gerar_base_corporativa(tamanho, int(seed))
 
@@ -132,10 +134,14 @@ with st.sidebar:
 # Cabeçalho Principal
 st.title("Arquitetura Analítica: Tendências, IA Aplicada e Privacidade")
 st.caption(
-    "Ambiente interativo de demonstração de conceitos de Real-Time BI, Augmented Analytics e conformidade LGPD."
+    "Ambiente interativo de demonstração de Real-Time BI, Augmented Analytics e conformidade LGPD."
 )
 
-# KPIs Executivos no Topo
+if df_filtrado.empty:
+    st.warning("Selecione pelo menos uma região na barra lateral para exibir os indicadores.")
+    st.stop()
+
+# KPIs Executivos
 if {"ticket_medio", "prob_churn", "renda_mensal"}.issubset(df_filtrado.columns):
     k1, k2, k3, k4 = st.columns(4)
     receita_total = df_filtrado["ticket_medio"].sum()
@@ -143,9 +149,9 @@ if {"ticket_medio", "prob_churn", "renda_mensal"}.issubset(df_filtrado.columns):
     churn_medio = df_filtrado["prob_churn"].mean()
 
     k1.metric("Registros Ativos", f"{len(df_filtrado):,}".replace(",", "."))
-    k2.metric("Receita Recorrente (MRR)", f"R$ {receita_total:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    k2.metric("Receita Recorrente (MRR)", formatar_brl(receita_total))
     k3.metric("Risco Médio de Churn", f"{churn_medio:.1f}%")
-    k4.metric("Receita sob Risco Crítico", f"R$ {receita_risco:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    k4.metric("Receita sob Risco Crítico", formatar_brl(receita_risco))
 
 st.divider()
 
@@ -169,7 +175,7 @@ with tab1:
     c1, c2 = st.columns([1, 3])
     with c1:
         z_threshold = st.slider("Limiar Z-Score (Desvios Padrão)", 1.5, 3.5, 2.3, 0.1)
-        janela_mm = st.slider("Janela da Média Móvel (periodos)", 3, 12, 5)
+        janela_mm = st.slider("Janela da Média Móvel (períodos)", 3, 12, 5)
         ruido_seed = st.number_input("Lote de Telemetria #", min_value=1, max_value=999, value=10)
 
     rng_stream = np.random.default_rng(int(ruido_seed))
@@ -178,17 +184,16 @@ with tab1:
     sazonalidade = 35 * np.sin(np.linspace(0, 3 * np.pi, 48))
     valores = tendencia + sazonalidade + rng_stream.normal(0, 22, 48)
 
-    # Injeção controlada de anomalias pontuais
     valores[16] += 145
     valores[37] -= 135
 
-    df_ts = pd.DataFrame({"timestamp": timestamps, "latencia_ou_volume": valores})
-    df_ts["media_movel"] = df_ts["latencia_ou_volume"].rolling(janela_mm, min_periods=1).mean()
-    df_ts["desvio_movel"] = df_ts["latencia_ou_volume"].rolling(janela_mm, min_periods=1).std().fillna(20)
+    df_ts = pd.DataFrame({"timestamp": timestamps, "volume_eventos": valores})
+    df_ts["media_movel"] = df_ts["volume_eventos"].rolling(janela_mm, min_periods=1).mean()
+    df_ts["desvio_movel"] = df_ts["volume_eventos"].rolling(janela_mm, min_periods=1).std().fillna(20)
     df_ts["banda_sup"] = df_ts["media_movel"] + z_threshold * df_ts["desvio_movel"]
     df_ts["banda_inf"] = df_ts["media_movel"] - z_threshold * df_ts["desvio_movel"]
-    df_ts["anomalia"] = (df_ts["latencia_ou_volume"] > df_ts["banda_sup"]) | (
-        df_ts["latencia_ou_volume"] < df_ts["banda_inf"]
+    df_ts["anomalia"] = (df_ts["volume_eventos"] > df_ts["banda_sup"]) | (
+        df_ts["volume_eventos"] < df_ts["banda_inf"]
     )
 
     with c2:
@@ -215,7 +220,7 @@ with tab1:
         fig_ts.add_trace(
             go.Scatter(
                 x=df_ts["timestamp"],
-                y=df_ts["latencia_ou_volume"],
+                y=df_ts["volume_eventos"],
                 mode="lines",
                 name="Eventos / 15min",
                 line=dict(color="#2563EB", width=2),
@@ -225,7 +230,7 @@ with tab1:
         fig_ts.add_trace(
             go.Scatter(
                 x=anomalias_df["timestamp"],
-                y=anomalias_df["latencia_ou_volume"],
+                y=anomalias_df["volume_eventos"],
                 mode="markers",
                 name="Anomalia Detectada",
                 marker=dict(color="#DC2626", size=10, symbol="diamond"),
@@ -268,13 +273,17 @@ with tab2:
                     y="ticket_medio",
                     color="prob_churn",
                     color_continuous_scale="Blues",
-                    labels={"segmento": "Segmento", "ticket_medio": "Ticket Médio (R$)", "prob_churn": "Risco Churn (%)"},
+                    labels={
+                        "segmento": "Segmento",
+                        "ticket_medio": "Ticket Médio (R$)",
+                        "prob_churn": "Risco Churn (%)",
+                    },
                     title="Ticket Médio e Risco de Churn por Segmento",
                 )
                 st.plotly_chart(fig, use_container_width=True)
                 melhor = agg.sort_values("ticket_medio", ascending=False).iloc[0]
                 st.info(
-                    f"Diagnóstico Automatizado: O segmento {melhor['segmento']} concentra o maior ticket médio (R$ {melhor['ticket_medio']:.2f})."
+                    f"Diagnóstico Automatizado: O segmento {melhor['segmento']} concentra o maior ticket médio ({formatar_brl(melhor['ticket_medio'])})."
                 )
 
             elif "inatividade" in consulta_texto or "dias" in consulta_texto or "correlacao" in consulta_texto:
@@ -284,7 +293,10 @@ with tab2:
                     y="prob_churn",
                     color="segmento",
                     opacity=0.75,
-                    labels={"dias_inativo": "Dias sem Interação", "prob_churn": "Probabilidade de Churn (%)"},
+                    labels={
+                        "dias_inativo": "Dias sem Interação",
+                        "prob_churn": "Probabilidade de Churn (%)",
+                    },
                     title="Dispersão: Inatividade vs. Risco Preditivo de Churn",
                 )
                 st.plotly_chart(fig, use_container_width=True)
@@ -294,12 +306,19 @@ with tab2:
                 )
 
             else:
-                agg = df_filtrado.groupby("regiao", as_index=False)["prob_churn"].mean().sort_values("prob_churn", ascending=False)
+                agg = (
+                    df_filtrado.groupby("regiao", as_index=False)["prob_churn"]
+                    .mean()
+                    .sort_values("prob_churn", ascending=False)
+                )
                 fig = px.bar(
                     agg,
                     x="regiao",
                     y="prob_churn",
-                    labels={"regiao": "Região", "prob_churn": "Probabilidade Média de Churn (%)"},
+                    labels={
+                        "regiao": "Região",
+                        "prob_churn": "Probabilidade Média de Churn (%)",
+                    },
                     title="Risco Médio de Churn por Região",
                     color_discrete_sequence=["#1E40AF"],
                 )
@@ -319,12 +338,12 @@ with tab2:
         if {"prob_churn", "ticket_medio"}.issubset(df_filtrado.columns):
             alvo = df_filtrado[df_filtrado["prob_churn"] >= limiar_risco]
             qtd_alvo = len(alvo)
-            receita_preservada = alvo["ticket_medio"].sum() * (taxa_conversao / 100) * 6  # horizonte 6 meses
+            receita_preservada = alvo["ticket_medio"].sum() * (taxa_conversao / 100) * 6
             custo_total = qtd_alvo * custo_incentivo
-            roi = ((receita_preservada - custo_total) / custo_total * 100) if custo_total > 0 else 0
+            roi = ((receita_preservada - custo_total) / custo_total * 100) if custo_total > 0 else 0.0
 
             st.metric("Clientes Elegíveis à Ação", f"{qtd_alvo}")
-            st.metric("Receita Preservada (6 meses)", f"R$ {receita_preservada:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+            st.metric("Receita Preservada (6 meses)", formatar_brl(receita_preservada))
             st.metric("ROI Projetado da Intervenção", f"{roi:.1f}%")
 
 # ==============================================================================
@@ -346,7 +365,9 @@ with tab3:
         )
 
     colunas_exibicao = [
-        c for c in ["id_cliente", "nome", "cpf", "email", "regiao", "idade", "renda_mensal", "prob_churn"] if c in df_filtrado.columns
+        c
+        for c in ["id_cliente", "nome", "cpf", "email", "regiao", "idade", "renda_mensal", "prob_churn"]
+        if c in df_filtrado.columns
     ]
     df_gov = df_filtrado[colunas_exibicao].copy()
 
@@ -373,9 +394,8 @@ with tab3:
                 df_gov[col] = df_gov[col].apply(
                     lambda v: hashlib.sha256(f"{salt}:{v}".encode()).hexdigest()[:14]
                 )
-        # Calcula o menor grupo único nos quase-identificadores restantes
         qi_cols = [c for c in ["regiao", "idade"] if c in df_gov.columns]
-        k_estimado = int(df_gov.groupby(qi_cols).size().min()) if qi_cols else 1
+        k_estimado = int(df_gov.groupby(qi_cols, observed=True).size().min()) if qi_cols else 1
 
     else:
         risco_label = "Baixo (Dado Anonimizado — Fora do escopo restritivo)"
@@ -393,10 +413,14 @@ with tab3:
             )
             df_gov = df_gov.drop(columns=["renda_mensal"])
         qi_cols = [c for c in ["regiao", "faixa_etaria", "faixa_renda"] if c in df_gov.columns]
-        k_estimado = int(df_gov.groupby(qi_cols).size().min()) if qi_cols else 1
+        k_estimado = int(df_gov.groupby(qi_cols, observed=True).size().min()) if qi_cols else 1
 
     with col_audit:
-        st.metric("Índice K-Anonymity Mínimo", f"k = {k_estimado}", help="Tamanho mínimo de equivalência entre quase-identificadores.")
+        st.metric(
+            "Índice K-Anonymity Mínimo",
+            f"k = {k_estimado}",
+            help="Menor tamanho de grupo indistinguível considerando os quase-identificadores.",
+        )
 
     st.caption(f"Classificação de Risco de Privacidade: **{risco_label}**")
     st.dataframe(df_gov.head(15), use_container_width=True, hide_index=True)
